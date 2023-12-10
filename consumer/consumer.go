@@ -15,31 +15,60 @@ func main() {
 	username := ""
 	password := ""
 
-	// Create connection with Reconnect option and HeartBeatGracePeriodMultiplier
-	conn, err := stomp.Dial("tcp", broker+":"+port,
-		stomp.ConnOpt.Login(username, password),
-		stomp.ConnOpt.AcceptVersion(stomp.V12),
-		stomp.ConnOpt.HeartBeat(5*time.Second, 5*time.Second), // Set the initial heartbeats
-		stomp.ConnOpt.HeartBeatGracePeriodMultiplier(5),       // Set HeartBeatGracePeriodMultiplier
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Define your queue
+	queue := "/queue/queue1"
+
+	// Establish initial connection
+	conn := connect(broker, port, username, password)
 	defer conn.Disconnect()
 
-	// Define your queues
-	queue1 := "/queue/queue1"
+	// Start listener
+	go listen(conn, queue)
 
-	// Message content
-	message := "Hello, ActiveMQ!"
-
-	// Send message to both queues
-	err = conn.Send(queue1, "text/plain", []byte(message))
-	if err != nil {
-		log.Printf("Error sending message to %s: %s", queue1, err)
-	} else {
-		fmt.Printf("Message sent to %s: %s\n", queue1, message)
+	// Send and receive messages
+	for {
+		time.Sleep(time.Second * 2)
 	}
+}
 
-	time.Sleep(time.Second * 2)
+func connect(broker, port, username, password string) *stomp.Conn {
+	for {
+		conn, err := stomp.Dial("tcp", broker+":"+port,
+			stomp.ConnOpt.Login(username, password),
+			stomp.ConnOpt.AcceptVersion(stomp.V12),
+			stomp.ConnOpt.HeartBeat(5*time.Second, 5*time.Second),
+			stomp.ConnOpt.HeartBeatGracePeriodMultiplier(5),
+		)
+		if err == nil {
+			fmt.Println("Connected to ActiveMQ")
+			return conn
+		}
+
+		fmt.Printf("Error connecting to ActiveMQ: %s. Retrying...\n", err)
+		time.Sleep(time.Second * 5)
+	}
+}
+
+func listen(conn *stomp.Conn, queue string) {
+	sub, err := conn.Subscribe(queue, stomp.AckAuto)
+	if err != nil {
+		log.Fatalf("Error subscribing to %s: %s", queue, err)
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		msg := <-sub.C
+		if msg.Err != nil {
+			log.Printf("Error receiving message from %s: %s", queue, msg.Err)
+			time.Sleep(time.Second * 5) // Wait before reconnecting
+			conn = connect("localhost", "61613", "your_username", "your_password")
+			sub, err = conn.Subscribe(queue, stomp.AckAuto)
+			if err != nil {
+				log.Fatalf("Error re-subscribing to %s: %s", queue, err)
+			}
+			continue
+		}
+
+		fmt.Printf("Received message from %s: %s\n", queue, msg.Body)
+	}
 }
